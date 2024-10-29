@@ -1,104 +1,109 @@
-from flask import Flask, request, render_template, redirect, url_for, session, flash
+from flask import Flask, render_template, request, redirect, url_for, flash, session
 import sqlite3
 
 app = Flask(__name__)
-app.secret_key = 'your_secret_key'
+app.secret_key = 'your_secret_key'  # Change this to a random secret key
 
-# Database initialization
-def init_db():
-    conn = sqlite3.connect('user.db')
-    cursor = conn.cursor()
-    cursor.execute('''CREATE TABLE IF NOT EXISTS users (
-                        id INTEGER PRIMARY KEY,
-                        username TEXT UNIQUE,
-                        password TEXT
-                    )''')
-    conn.commit()
-    conn.close()
+DATABASE = 'user.db'
 
-# Create a new user
-def create_user(username, password):
-    try:
-        conn = sqlite3.connect('user.db')
-        cursor = conn.cursor()
-        cursor.execute("INSERT INTO users (username, password) VALUES (?, ?)", (username, password))
-        conn.commit()
-    except sqlite3.IntegrityError:
-        flash("Username already exists. Please try a different one.")
-    finally:
-        conn.close()
+def get_db_connection():
+    conn = sqlite3.connect(DATABASE)
+    conn.row_factory = sqlite3.Row
+    return conn
 
-# Login function to verify user credentials
-def login_user(username, password):
-    conn = sqlite3.connect('user.db')
-    cursor = conn.cursor()
-    cursor.execute("SELECT * FROM users WHERE username = ? AND password = ?", (username, password))
-    user = cursor.fetchone()
-    conn.close()
-    return user
-
-# Route to home page
 @app.route('/')
-def home():
-    return render_template('home.html')
+def index():
+    return render_template('index.html')
 
-# Route to login page
-@app.route('/login', methods=['GET', 'POST'])
-def login():
-    if request.method == 'POST':
-        username = request.form['username']
-        password = request.form['password']
-        user = login_user(username, password)
-        if user:
-            session['username'] = username
-            flash("Login successful!")
-            return redirect(url_for('dashboard'))
-        else:
-            flash("Invalid username or password.")
-    return render_template('login.html')
-
-# Route to signup page
 @app.route('/signup', methods=['GET', 'POST'])
 def signup():
     if request.method == 'POST':
         username = request.form['username']
         password = request.form['password']
         create_user(username, password)
-        flash("Account created successfully. You can now log in.")
+        flash('Account created successfully! You can now log in.')
         return redirect(url_for('login'))
     return render_template('signup.html')
 
-# Route to user dashboard after login
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    if request.method == 'POST':
+        username = request.form['username']
+        password = request.form['password']
+        user_id = login_user(username, password)
+        if user_id:
+            session['user_id'] = user_id
+            flash('Login successful!')
+            return redirect(url_for('dashboard'))
+        else:
+            flash('Invalid username or password.')
+    return render_template('login.html')
+
+
 @app.route('/dashboard')
 def dashboard():
-    if 'username' not in session:
-        flash("You need to log in first.")
+    if 'user_id' not in session:
         return redirect(url_for('login'))
-    return render_template('dashboard.html', username=session['username'])
+    user_id = session['user_id']
+    items = list_items(user_id)
+    return render_template('dashboard.html', items=items)
 
-# Route to list items
-@app.route('/list_items')
-def list_items():
-    if 'username' not in session:
-        flash("You need to log in first.")
-        return redirect(url_for('login'))
-    return "Your old items: [Placeholder]"
-
-# Route to create a new list
-@app.route('/create_list')
+@app.route('/create_list', methods=['POST'])
 def create_list():
-    if 'username' not in session:
-        flash("You need to log in first.")
-        return redirect(url_for('login'))
-    return "Create a new list: [Placeholder]"
+    if 'user_id' in session:
+        user_id = session['user_id']
+        data_value = request.form['data_value']
+        add_item(user_id, data_value)
+        flash('Item created successfully.')
+    return redirect(url_for('dashboard'))
 
-# Route to logout
+def create_user(username, password):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute('''CREATE TABLE IF NOT EXISTS users (
+                        id INTEGER PRIMARY KEY,
+                        username TEXT UNIQUE,
+                        password TEXT
+                    )''')
+    cursor.execute("INSERT INTO users (username, password) VALUES (?, ?)", (username, password))
+    conn.commit()
+    conn.close()
+
+def login_user(username, password):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT id FROM users WHERE username = ? AND password = ?", (username, password))
+    user = cursor.fetchone()
+    conn.close()
+    return user['id'] if user else None
+
+def list_items(user_id):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT data_value FROM user_data WHERE user_id = ?", (user_id,))
+    items = cursor.fetchall()
+    conn.close()
+    return [item['data_value'] for item in items]
+
 @app.route('/logout')
 def logout():
-    session.pop('username', None)
-    flash("Logged out successfully.")
-    return redirect(url_for('home'))
+    session.pop('user_id', None)  # Remove the user_id from the session
+    flash('You have been logged out.')
+    return redirect(url_for('index'))
 
-if __name__ == "__main__":
-    init_db()
+
+def add_item(user_id, data_value):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute('''CREATE TABLE IF NOT EXISTS user_data (
+                        data_id INTEGER PRIMARY KEY,
+                        user_id INTEGER,
+                        data_value TEXT,
+                        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+                    )''')
+    cursor.execute("INSERT INTO user_data (user_id, data_value) VALUES (?, ?)", (user_id, data_value))
+    conn.commit()
+    conn.close()
+
+if __name__ == '__main__':
     app.run(debug=True)
